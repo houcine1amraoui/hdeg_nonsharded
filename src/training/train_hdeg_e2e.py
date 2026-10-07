@@ -47,7 +47,7 @@ from src.utils.seed import set_seed
 
 # Reuse the authoritative paired-window loading/manifest utilities from the
 # existing DBRL sharded implementation. Do not duplicate their contracts.
-from run_dbrl_sharded import (
+from run_dbrl import (
     load_manifest,
     load_window_shard,
     resolve_shard_path,
