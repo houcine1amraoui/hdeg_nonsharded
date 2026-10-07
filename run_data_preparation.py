@@ -4,7 +4,7 @@ from src.utils.save_utils import save_processed_data
 import yaml
 import argparse
 
-def main_preprocess():
+def data_preparation():
     """
     Typical preprocessing pipeline:
     1s-raw data -> actors split -> noise filtering -> 5s-downsampling 
@@ -36,4 +36,4 @@ def main_preprocess():
     print("Data preprocessing Done.")
 
 if __name__ == "__main__":
-    main_preprocess()
+    data_preparation()
