@@ -1,0 +1,49 @@
+{
+  "python_files_parsed": 39,
+  "cli_help": {
+    "run_bil.py": {
+      "exit_code": 0
+    },
+    "run_bse.py": {
+      "exit_code": 0
+    },
+    "run_dbrl.py": {
+      "exit_code": 0
+    },
+    "run_e2e_training.py": {
+      "exit_code": 0
+    },
+    "run_ebrl.py": {
+      "exit_code": 0
+    },
+    "run_hbf.py": {
+      "exit_code": 0
+    },
+    "run_mbai.py": {
+      "exit_code": 0
+    },
+    "run_mo.py": {
+      "exit_code": 0
+    },
+    "run_preprocess.py": {
+      "exit_code": 0
+    }
+  },
+  "preserved_original_core_files": {
+    "src/models/hdeg/mo.py": true,
+    "src/models/hdeg/mbai.py": true,
+    "src/models/hdeg/types.py": true,
+    "src/models/hdeg/hbf.py": true,
+    "src/models/hdeg/ebrl.py": true,
+    "src/models/hdeg/graph_reasoner.py": true,
+    "src/models/hdeg/bse.py": true,
+    "src/models/hdeg/dbrl.py": true,
+    "src/models/hdeg/bil.py": true,
+    "src/common/graph/graph_builder.py": true,
+    "src/common/graph/test_graph_builder.py": true,
+    "src/common/graph/semantics/behavioral_state_config.py": true,
+    "src/common/graph/semantics/__init__.py": true
+  },
+  "neural_runtime": "not executed: PyTorch and torch-geometric unavailable",
+  "dependencies_changed": false
+}

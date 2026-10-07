@@ -1,0 +1,36 @@
+name: gnn-env
+
+channels:
+  - pytorch
+  - nvidia
+  - defaults
+
+dependencies:
+  - python=3.10
+
+  # PyTorch GPU
+  - pytorch=2.5.1
+  - torchvision=0.20.1
+  - torchaudio=2.5.1
+  - pytorch-cuda=12.1
+
+  # Core scientific stack
+  - numpy
+  - pandas
+  - matplotlib
+  - scikit-learn
+  - scipy
+  - networkx
+  - pyyaml
+  - tqdm
+  - joblib
+  - seaborn
+
+  - pip
+
+  - pip:
+      - torch-geometric==2.7.0
+      - aiohttp
+      - fsspec
+      - psutil
+      - xxhash

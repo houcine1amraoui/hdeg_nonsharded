@@ -1,0 +1,14 @@
+test_config_change_rejected (test_restart.DataChecks.test_config_change_rejected) ... ok
+test_data_and_timestamp_mutation_detected (test_restart.DataChecks.test_data_and_timestamp_mutation_detected) ... ok
+test_existing_output_preserved (test_restart.DataChecks.test_existing_output_preserved) ... ok
+test_lazy_windows_include_last_target (test_restart.DataChecks.test_lazy_windows_include_last_target) ... ok
+test_missing_periods_rejected_unless_explicit_module_check (test_restart.DataChecks.test_missing_periods_rejected_unless_explicit_module_check) ... ok
+test_no_windows_across_time_gaps (test_restart.DataChecks.test_no_windows_across_time_gaps) ... ok
+test_overlap_rejected (test_restart.DataChecks.test_overlap_rejected) ... ok
+test_scaler_uses_train_only_and_exact_device_schema (test_restart.DataChecks.test_scaler_uses_train_only_and_exact_device_schema) ... ok
+test_stage_exports_training_and_checkpoint_consistency (test_restart.NeuralIntegrationChecks.test_stage_exports_training_and_checkpoint_consistency) ... skipped 'Requires PyTorch and torch-geometric; not a passed test when skipped.'
+
+----------------------------------------------------------------------
+Ran 9 tests in 0.302s
+
+OK (skipped=1)

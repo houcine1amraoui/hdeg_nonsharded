@@ -1,0 +1,35 @@
+seed: 42
+data:
+  csv: data/CU.csv
+  output: outputs/CU
+  semantic_config: configs/hdeg/behavioral_states.yaml
+  window_size: 30
+  frequency: 1s
+  val_ratio: 0.1
+  periods:
+    actor1_t1: ['2022-10-18 00:00:00', '2022-11-07 23:59:59']
+    actor2_test: ['2022-11-08 00:00:00', '2022-11-10 23:59:59']
+    actor1_test: ['2022-11-11 00:00:00', '2022-11-17 23:59:59']
+hdeg:
+  dbrl:
+    hidden_dim: 64
+    embedding_dim: 64
+    gru_layers: 1
+    graph_top_k: 15
+    graph_self_loops: true
+    graph_symmetric: true
+    graph_heads: 1
+  bse:
+    num_heads: 1
+  hbf:
+    dynamics_hidden_dim: 128
+  mo:
+    lambda_z: 1.0
+    lambda_s: 1.0
+    lambda_s_tilde: 1.0
+    lambda_g: 1.0
+training:
+  epochs: 1
+  batch_size: 32
+  lr: 0.0001
+  device: cpu
