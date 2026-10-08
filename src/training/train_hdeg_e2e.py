@@ -26,6 +26,7 @@ from dataclasses import dataclass
 import argparse
 from pathlib import Path
 from typing import Dict, Optional, Tuple
+import time
 
 import numpy as np
 import torch
@@ -341,6 +342,7 @@ def run_epoch(
 
     X, Y = windows["X"], windows["y"]
     num_samples = int(X.shape[0])
+    start_time = time.time()
     with grad_context:
         for start in range(0, num_samples, batch_size):
             if max_batches is not None and total_batches >= max_batches:
@@ -370,6 +372,19 @@ def run_epoch(
             total_samples += current_batch_size
             total_batches += 1
 
+            if train and total_batches % 100 == 0:
+                elapsed = time.time() - start_time
+                total_num_batches = min(
+                    (num_samples + batch_size - 1) // batch_size,
+                    max_batches if max_batches is not None else (num_samples + batch_size - 1) // batch_size,
+                )
+                eta = elapsed / total_batches * (total_num_batches - total_batches)
+                print(
+                    f"  Batch {total_batches}/{total_num_batches} | "
+                    f"Elapsed: {elapsed/60:.1f} min | ETA: {eta/60:.1f} min",
+                    flush=True,
+                )
+            
             del x_t, y_t1, observed_t1, objectives
 
 
