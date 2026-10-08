@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 """
-End-to-end HDEG training over paired CU window shards.
+End-to-end HDEG training over paired CU windows.
 
 This runner is deliberately separate from the persisted DBRL/BSE/BIL/EBRL
 artifact runners. Those runners are inference/artifact-generation paths and
@@ -13,8 +13,8 @@ live trainable graph:
                                       \
                                        -> MO -> L_HDEG -> backward()
 
-Only one paired window shard is loaded at a time, and only one mini-batch from
-that shard is placed on the execution device at a time.
+One paired split file is loaded on CPU, and only one mini-batch is placed
+on the execution device at a time.
 
 The implementation deliberately does not detach the target hierarchy. V1.0
 specifies joint optimization of representation learning and forecasting but
@@ -24,10 +24,8 @@ future representation remains part of the autograd graph.
 
 from dataclasses import dataclass
 import argparse
-import gc
-import json
 from pathlib import Path
-from typing import Dict, Iterable, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 import torch
@@ -45,14 +43,8 @@ from src.utils.device import get_device
 from src.utils.get_folders_utils import get_processed_folder
 from src.utils.seed import set_seed
 
-# Reuse the authoritative paired-window loading/manifest utilities from the
-# existing DBRL sharded implementation. Do not duplicate their contracts.
-from run_dbrl import (
-    load_manifest,
-    load_window_shard,
-    resolve_shard_path,
-    verify_window_target_alignment,
-)
+# Reuse the non-sharded loader and its existing window contract.
+from run_dbrl import load_windows, verify_window_target_alignment
 
 
 SPLITS = ("train", "val", "actor2_test", "actor1_test")
@@ -67,7 +59,6 @@ class EpochMetrics:
     L_S_tilde: float
     L_G: float
     samples: int
-    shards: int
     batches: int
 
 
@@ -325,16 +316,14 @@ def run_epoch(
     model: HDEGEndToEndModel,
     optimizer: Optional[torch.optim.Optimizer],
     *,
-    shard_paths: Iterable[Path],
-    split: str,
-    window_size: int,
+    windows: dict[str, np.ndarray],
     num_devices: int,
     num_states: int,
     embedding_dim: int,
     batch_size: int,
     device: torch.device,
     train: bool,
-    max_batches_per_shard: Optional[int] = None,
+    max_batches: Optional[int] = None,
 ) -> EpochMetrics:
     if train and optimizer is None:
         raise ValueError("optimizer is required for training mode.")
@@ -347,69 +336,42 @@ def run_epoch(
     totals = {"L_HDEG": 0.0, "L_Z": 0.0, "L_S": 0.0, "L_S_tilde": 0.0, "L_G": 0.0}
     total_samples = 0
     total_batches = 0
-    total_shards = 0
 
     grad_context = torch.enable_grad() if train else torch.no_grad()
 
+    X, Y = windows["X"], windows["y"]
+    num_samples = int(X.shape[0])
     with grad_context:
-        for shard_path in shard_paths:
-            artifact = load_window_shard(
-                shard_path=shard_path,
-                expected_split=split,
-                expected_window_size=window_size,
-                expected_num_devices=num_devices,
-            )
-            verify_window_target_alignment(artifact)
+        for start in range(0, num_samples, batch_size):
+            if max_batches is not None and total_batches >= max_batches:
+                break
+            end = min(start + batch_size, num_samples)
+            current_batch_size = end - start
 
-            X = artifact["X"]
-            Y = artifact["Y"]
-            shard_samples = int(X.shape[0])
-            shard_index = int(artifact["shard_index"].item())
+            x_t = _move_batch(X, start, end, device)
+            y_t1 = _move_batch(Y, start, end, device)
 
-            print(
-                f"  shard {shard_index:06d}: "
-                f"[{int(artifact['start_index'].item())}, "
-                f"{int(artifact['end_index'].item())}) "
-                f"samples={shard_samples}"
-            )
+            if train:
+                optimizer.zero_grad(set_to_none=True)
 
-            shard_batches = 0
-            for start in range(0, shard_samples, batch_size):
-                if max_batches_per_shard is not None and shard_batches >= max_batches_per_shard:
-                    break
-                end = min(start + batch_size, shard_samples)
-                current_batch_size = end - start
+            _, observed_t1, objectives = model.optimize_pair(x_t, y_t1)
 
-                x_t = _move_batch(X, start, end, device)
-                y_t1 = _move_batch(Y, start, end, device)
+            # Verify that the target representation is a live autograd
+            # tensor rather than a persisted/detached artifact.
+            if train:
+                if not observed_t1["Z"].requires_grad:
+                    raise RuntimeError("Target Z is detached from the live autograd graph.")
+                if not objectives.L_HDEG.requires_grad:
+                    raise RuntimeError("MO loss is detached from the live autograd graph.")
+                objectives.L_HDEG.backward()
+                optimizer.step()
 
-                if train:
-                    optimizer.zero_grad(set_to_none=True)
+            _accumulate_metrics(totals, objectives, current_batch_size)
+            total_samples += current_batch_size
+            total_batches += 1
 
-                _, observed_t1, objectives = model.optimize_pair(x_t, y_t1)
+            del x_t, y_t1, observed_t1, objectives
 
-                # Verify that the target representation is a live autograd
-                # tensor rather than a persisted/detached artifact.
-                if train:
-                    if not observed_t1["Z"].requires_grad:
-                        raise RuntimeError("Target Z is detached from the live autograd graph.")
-                    if not objectives.L_HDEG.requires_grad:
-                        raise RuntimeError("MO loss is detached from the live autograd graph.")
-                    objectives.L_HDEG.backward()
-                    optimizer.step()
-
-                _accumulate_metrics(totals, objectives, current_batch_size)
-                total_samples += current_batch_size
-                total_batches += 1
-                shard_batches += 1
-
-                del x_t, y_t1, observed_t1, objectives
-
-            total_shards += 1
-            del X, Y, artifact
-            gc.collect()
-            if device.type == "cuda":
-                torch.cuda.empty_cache()
 
     if total_samples == 0:
         raise RuntimeError("No paired window samples were processed.")
@@ -421,7 +383,6 @@ def run_epoch(
         L_S_tilde=totals["L_S_tilde"] / total_samples,
         L_G=totals["L_G"] / total_samples,
         samples=total_samples,
-        shards=total_shards,
         batches=total_batches,
     )
 
@@ -433,16 +394,15 @@ def run_epoch(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Train HDEG end-to-end over paired CU window shards."
+        description="Train HDEG end-to-end over paired CU windows."
     )
     parser.add_argument("--project_root_dir", type=str, default=None)
     parser.add_argument("--config", type=str, default="configs/config.yaml")
-    parser.add_argument("--split", type=str, choices=SPLITS, default="train")
+    parser.add_argument("--split", type=str, choices=("train",), default="train")
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--lr", type=float, default=None)
     parser.add_argument("--batch_size", type=int, default=None)
-    parser.add_argument("--max_shards", type=int, default=None)
-    parser.add_argument("--max_batches_per_shard", type=int, default=None)
+    parser.add_argument("--max_batches", type=int, default=None)
     parser.add_argument("--checkpoint", type=str, default=None)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--checkpoint_dir", type=str, default=None)
@@ -482,27 +442,18 @@ def main() -> None:
 
     if batch_size <= 0 or epochs <= 0 or lr <= 0.0:
         raise ValueError("batch_size, epochs, and lr must be positive.")
-    if args.max_shards is not None and args.max_shards <= 0:
-        raise ValueError("max_shards must be positive when provided.")
-    if args.max_batches_per_shard is not None and args.max_batches_per_shard <= 0:
-        raise ValueError("max_batches_per_shard must be positive when provided.")
+    if args.max_batches is not None and args.max_batches <= 0:
+        raise ValueError("max_batches must be positive when provided.")
 
     processed_data_folder = Path(get_processed_folder(config))
     windows_dir = processed_data_folder / "windows"
-    split_dir = windows_dir / args.split
-
-    manifest = load_manifest(windows_dir=windows_dir, split=args.split)
-    num_devices = int(manifest["num_devices"])
-    manifest_window_size = int(manifest["window_size"])
-    if manifest_window_size != window_size:
-        raise ValueError(
-            f"Config/manifest window-size mismatch: config={window_size}, manifest={manifest_window_size}."
-        )
-
-    shard_entries = list(manifest["shards"])
-    if args.max_shards is not None:
-        shard_entries = shard_entries[:args.max_shards]
-    shard_paths = [resolve_shard_path(split_dir, entry) for entry in shard_entries]
+    window_path = windows_dir / f"{args.split}.npz"
+    windows = load_windows(
+        window_path=window_path,
+        expected_window_size=window_size,
+    )
+    verify_window_target_alignment(windows)
+    num_devices = int(windows["num_devices"].item())
 
     behavioral_config_path = (
         Path(config["project_root_dir"]) / "configs" / "hdeg" / "behavioral_states.yaml"
@@ -516,7 +467,7 @@ def main() -> None:
     if behavioral_config.num_devices != num_devices:
         raise ValueError(
             f"Behavioral-state device count {behavioral_config.num_devices} "
-            f"does not match window manifest N={num_devices}."
+            f"does not match window file N={num_devices}."
         )
 
     num_states = int(behavioral_config.num_states)
@@ -557,9 +508,8 @@ def main() -> None:
     print("HDEG — END-TO-END TRAINING")
     print("=" * 78)
     print(f"Split                 : {args.split}")
-    print(f"Window directory     : {split_dir}")
-    print(f"Shards                : {len(shard_paths)}")
-    print(f"Samples in manifest   : {manifest['num_samples']}")
+    print(f"Window file           : {window_path}")
+    print(f"Samples in file       : {windows['X'].shape[0]}")
     print(f"N / K / D             : {num_devices} / {num_states} / {embedding_dim}")
     print(f"Batch size             : {batch_size}")
     print(f"Epochs                 : {epochs}")
@@ -580,16 +530,14 @@ def main() -> None:
         metrics = run_epoch(
             model,
             optimizer,
-            shard_paths=shard_paths,
-            split=args.split,
-            window_size=window_size,
+            windows=windows,
             num_devices=num_devices,
             num_states=num_states,
             embedding_dim=embedding_dim,
             batch_size=batch_size,
             device=device,
             train=True,
-            max_batches_per_shard=args.max_batches_per_shard,
+            max_batches=args.max_batches,
         )
         history.append(metrics.__dict__)
 
